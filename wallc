@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+
+import argparse
+from pathlib import Path
+
+try:
+    import imagehash
+    from PIL import Image
+except ImportError:
+    print("Error: Missing dependencies. Install with: \n\n\t`pip install ImageHash Pillow`\n")
+    exit(1)
+
+def get_perceptual_hash(path: Path) -> str:
+    """Generates a "visual" hash. Images that look identical
+    but have different formats, metadatas, or compressions will match."""
+    with Image.open(path) as img:
+        return str(imagehash.dhash(img))
+
+def clean_and_rename(directory: str):
+    target_dir = Path(directory).resolve()
+    if not target_dir.is_dir():
+        print(f"Error: {directory} is not a valid directory.")
+        return
+
+    # Supported image extensions
+    valid_exts = {'.png', '.jpg', '.jpeg', '.webp'}
+    
+    # Gather files sorted by modification time (oldest first)
+    files = sorted(
+        [f for f in target_dir.iterdir() if f.is_file() and f.suffix.lower() in valid_exts],
+        key=lambda x: x.stat().st_mtime
+    )
+
+    # Identify and remove newer duplicates
+    seen_hashes = set()
+    unique_files = []
+    
+    for file in files:
+        f_hash = get_perceptual_hash(file)
+        if f_hash in seen_hashes:
+            print(f"[Removing Duplicate] {file.name} (Newer copy)")
+            file.unlink()
+        else:
+            seen_hashes.add(f_hash)
+            unique_files.append(file)
+
+    total_files = len(unique_files)
+    if total_files == 0:
+        print("No valid images found.")
+        return
+
+    # Padding Calculation
+    padding = max(4, len(str(total_files)))
+    
+    print(f"\nProcessing {total_files} unique images. Target padding: {padding} digits...")
+
+    # Two-pass rename to prevent collision issues
+    temp_renamed = []
+    for idx, file in enumerate(unique_files, start=1):
+        temp_name = target_dir / f".tmp_{idx}_{file.name}"
+        file.rename(temp_name)
+        temp_renamed.append((temp_name, file.suffix.lower(), idx))
+
+    # Final pass to sequential target format
+    for temp_path, ext, idx in temp_renamed:
+        new_name = target_dir / f"{str(idx).zfill(padding)}{ext}"
+        temp_path.rename(new_name)
+
+    print("Directory cleanup complete.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Clean and automatically rename wallpaper directory.")
+    parser.add_argument("directory", type=str, help="Path to the wallpaper directory")
+    
+    args = parser.parse_args()
+    clean_and_rename(args.directory)
